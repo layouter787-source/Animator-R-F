@@ -2,6 +2,7 @@ add_library(arf_core STATIC
   src/timeline.cpp
   src/project.cpp
   src/rig.cpp
+  src/drawing.cpp
 )
 target_include_directories(arf_core PUBLIC include)
 target_compile_features(arf_core PUBLIC cxx_std_20)
