@@ -10,6 +10,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   core-tests:
     runs-on: ubuntu-latest
@@ -21,13 +26,45 @@ jobs:
           cmake --build build
           ctest --test-dir build --output-on-failure
 
-  android:
+  qml-smoke:
     runs-on: ubuntu-latest
-    env:
-      QT_VERSION: 6.8.1
-      NDK_VERSION: 26.1.10909125
     steps:
       - uses: actions/checkout@v4
+      - name: Config
+        run: cat ci/config.env >> "$GITHUB_ENV"
+      - name: Dependências do sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgl1 libegl1 libxkbcommon0 libfontconfig1 libglib2.0-0
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          cache: true
+      - name: Teste de fumaça do QML
+        run: bash scripts/ci-smoke.sh
+      - name: Comentar erro na PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const t = fs.existsSync('build.log')
+              ? fs.readFileSync('build.log', 'utf8').split('\n').slice(-80).join('\n')
+              : '(sem log)';
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body: '**Erro no job ' + context.job + '**\n```\n' + t + '\n```'
+            });
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Config
+        run: cat ci/config.env >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -40,17 +77,24 @@ jobs:
           target: android
           arch: android_arm64_v8a
           extra: --autodesktop
-      - name: NDK
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" "platforms;android-34" "build-tools;34.0.0"
-      - name: Configurar e compilar APK
-        run: |
-          "$QT_ROOT_DIR/bin/qt-cmake" -S . -B build-android -G Ninja \
-            -DQT_HOST_PATH="$QT_HOST_PATH" \
-            -DANDROID_SDK_ROOT="$ANDROID_HOME" \
-            -DANDROID_NDK_ROOT="$ANDROID_HOME/ndk/${NDK_VERSION}" \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-android --target apk
+          cache: true
+      - name: Compilar APK
+        run: bash scripts/ci-android.sh
       - uses: actions/upload-artifact@v4
         with:
           name: AnimatorRF-apk
           path: build-android/**/*.apk
+      - name: Comentar erro na PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const t = fs.existsSync('build.log')
+              ? fs.readFileSync('build.log', 'utf8').split('\n').slice(-80).join('\n')
+              : '(sem log)';
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body: '**Erro no job ' + context.job + '**\n```\n' + t + '\n```'
+            });
