@@ -69,16 +69,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - name: Qt (desktop + Android)
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: ${{ env.QT_VERSION }}
-          host: linux
-          target: android
-          arch: android_arm64_v8a
-          extra: --autodesktop
-          cache: true
-      - name: Compilar APK
+      - name: Instalar Qt e compilar APK
         run: bash scripts/ci-android.sh
       - uses: actions/upload-artifact@v4
         with:
