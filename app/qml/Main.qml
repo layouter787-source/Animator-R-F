@@ -27,4 +27,10 @@ ApplicationWindow {
             onBack: stack.pop()
         }
     }
+
+    // Teste de fumaça do CI: abre o editor direto para validar a tela principal.
+    Component.onCompleted: {
+        if (Qt.application.arguments.indexOf("--smoke") >= 0)
+            stack.push(editorComponent)
+    }
 }
