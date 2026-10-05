@@ -8,6 +8,7 @@ namespace arf {
 
 struct Point {
   float x = 0, y = 0, pressure = 1;
+  float t = 0;  // segundos desde o início do traço (os pincéis MyPaint usam a velocidade)
 };
 
 // Tipos de pincel: lápis (traço firme), tinta (pressão + afinamento nas pontas), macio (bordas suaves).
@@ -22,6 +23,7 @@ struct Stroke {
   float opacity = 1.0f;
   bool antialias = true;  // false = traço pixelado
   bool eraser = false;
+  std::string preset;  // vazio = pincéis internos; senão, id de um pincel MyPaint (ex.: "classic/pencil")
 };
 
 struct Drawing {
