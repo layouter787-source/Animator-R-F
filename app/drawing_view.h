@@ -7,11 +7,13 @@
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QTransform>
 #include <QtQml/qqmlregistration.h>
 
 #include "arf/drawing.h"
 
 // Canvas de animação: desenha traços nas camadas, mostra onion skin e reproduz.
+// Gestos: 1 dedo/caneta desenha; 2 dedos fazem zoom, pan e rotação.
 class DrawingView : public QQuickPaintedItem {
   Q_OBJECT
   QML_ELEMENT
@@ -27,6 +29,7 @@ class DrawingView : public QQuickPaintedItem {
   Q_PROPERTY(bool canUndo READ canUndo NOTIFY revisionChanged)
   Q_PROPERTY(bool canRedo READ canRedo NOTIFY revisionChanged)
   Q_PROPERTY(int revision READ revision NOTIFY revisionChanged)
+  Q_PROPERTY(qreal zoom READ zoom NOTIFY viewChanged)
 
 public:
   explicit DrawingView(QQuickItem* parent = nullptr);
@@ -43,6 +46,7 @@ public:
   bool canUndo() const { return anim_.canUndo(); }
   bool canRedo() const { return anim_.canRedo(); }
   int revision() const { return revision_; }
+  qreal zoom() const { return zoom_; }
 
   void setFrame(int f);
   void setActiveLayer(int i);
@@ -59,6 +63,7 @@ public:
   Q_INVOKABLE void undo();
   Q_INVOKABLE void redo();
   Q_INVOKABLE void togglePlay();
+  Q_INVOKABLE void resetView();
 
   void paint(QPainter* painter) override;
 
@@ -71,15 +76,24 @@ signals:
   void onionSkinChanged();
   void playingChanged();
   void revisionChanged();
+  void viewChanged();
 
 protected:
   void mousePressEvent(QMouseEvent* e) override;
   void mouseMoveEvent(QMouseEvent* e) override;
   void mouseReleaseEvent(QMouseEvent* e) override;
+  void touchEvent(QTouchEvent* e) override;
+  void wheelEvent(QWheelEvent* e) override;
 
 private:
+  QTransform viewTransform() const;
+  qreal baseScale() const;
   QPointF toDoc(const QPointF& p) const;
-  qreal pageScale() const;
+  void zoomAbout(const QPointF& center, qreal factor);
+  bool beginStroke(const QPointF& pos, float pressure);
+  void extendStroke(const QPointF& pos, float pressure);
+  void endStroke();
+  void cancelStroke();
   QImage compose(int frame);
   QImage onionImage(int frame, const QColor& tint);
   void invalidate();
@@ -97,4 +111,12 @@ private:
   bool onion_ = true;
   bool playing_ = false;
   bool drawing_ = false;
+
+  // Vista (zoom/pan/rotação), relativa ao ajuste automático da página na tela.
+  qreal zoom_ = 1.0;
+  qreal rotation_ = 0.0;  // graus
+  QPointF pan_;
+  bool gesture_ = false;
+  bool panning_ = false;
+  QPointF lastMouse_;
 };
