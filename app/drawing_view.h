@@ -10,6 +10,8 @@
 #include <QTransform>
 #include <QtQml/qqmlregistration.h>
 
+#include <vector>
+
 #include "arf/drawing.h"
 
 // Canvas de animação: desenha traços nas camadas, mostra onion skin e reproduz.
@@ -24,6 +26,9 @@ class DrawingView : public QQuickPaintedItem {
   Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
   Q_PROPERTY(QColor color READ color WRITE setColor NOTIFY colorChanged)
   Q_PROPERTY(qreal brushSize READ brushSize WRITE setBrushSize NOTIFY brushSizeChanged)
+  Q_PROPERTY(qreal brushOpacity READ brushOpacity WRITE setBrushOpacity NOTIFY brushOpacityChanged)
+  Q_PROPERTY(qreal stabilizer READ stabilizer WRITE setStabilizer NOTIFY stabilizerChanged)
+  Q_PROPERTY(bool smoothStrokes READ smoothStrokes WRITE setSmoothStrokes NOTIFY smoothStrokesChanged)
   Q_PROPERTY(bool onionSkin READ onionSkin WRITE setOnionSkin NOTIFY onionSkinChanged)
   Q_PROPERTY(bool playing READ playing NOTIFY playingChanged)
   Q_PROPERTY(bool canUndo READ canUndo NOTIFY revisionChanged)
@@ -41,6 +46,9 @@ public:
   QString tool() const { return tool_; }
   QColor color() const { return color_; }
   qreal brushSize() const { return brushSize_; }
+  qreal brushOpacity() const { return brushOpacity_; }
+  qreal stabilizer() const { return stabilizer_; }
+  bool smoothStrokes() const { return smoothStrokes_; }
   bool onionSkin() const { return onion_; }
   bool playing() const { return playing_; }
   bool canUndo() const { return anim_.canUndo(); }
@@ -53,6 +61,9 @@ public:
   void setTool(const QString& t);
   void setColor(const QColor& c);
   void setBrushSize(qreal s);
+  void setBrushOpacity(qreal o);
+  void setStabilizer(qreal s);
+  void setSmoothStrokes(bool on);
   void setOnionSkin(bool on);
 
   Q_INVOKABLE int addLayer();
@@ -73,6 +84,9 @@ signals:
   void toolChanged();
   void colorChanged();
   void brushSizeChanged();
+  void brushOpacityChanged();
+  void stabilizerChanged();
+  void smoothStrokesChanged();
   void onionSkinChanged();
   void playingChanged();
   void revisionChanged();
@@ -90,17 +104,27 @@ private:
   qreal baseScale() const;
   QPointF toDoc(const QPointF& p) const;
   void zoomAbout(const QPointF& center, qreal factor);
+
   bool beginStroke(const QPointF& pos, float pressure);
   void extendStroke(const QPointF& pos, float pressure);
+  void addLivePoint(const QPointF& docPt, float pressure);
+  void finishStabilizer();
   void endStroke();
   void cancelStroke();
+  QColor previewColor() const;
+
+  QImage layerImage(int layer, int frame);
   QImage compose(int frame);
   QImage onionImage(int frame, const QColor& tint);
-  void invalidate();
+  void invalidate(bool layersToo = false);
 
   arf::Animation anim_;
   arf::Stroke current_;
-  QHash<int, QImage> cache_;
+  QHash<int, QImage> cache_;                 // quadros já compostos (e onion skin)
+  QHash<quint64, QImage> layerImgs_;         // imagem de cada (camada, quadro-chave)
+  QImage live_;                              // traço em andamento
+  std::vector<double> liveCum_;
+  int liveSeg_ = 0;
   QTimer playTimer_;
   int frame_ = 1;
   int activeLayer_ = 0;
@@ -108,9 +132,14 @@ private:
   QString tool_ = "Pencil";
   QColor color_ = QColor("#111111");
   qreal brushSize_ = 6;
+  qreal brushOpacity_ = 1.0;
+  qreal stabilizer_ = 0.35;
+  bool smoothStrokes_ = true;  // sempre ligado por padrão; desligar deixa o traço pixelado
   bool onion_ = true;
   bool playing_ = false;
   bool drawing_ = false;
+  QPointF rawLast_;
+  float rawPressure_ = 1.0f;
 
   // Vista (zoom/pan/rotação), relativa ao ajuste automático da página na tela.
   qreal zoom_ = 1.0;
