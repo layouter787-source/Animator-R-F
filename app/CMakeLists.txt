@@ -11,11 +11,13 @@ qt_add_executable(AnimatorRF main.cpp)
 qt_add_qml_module(AnimatorRF
   URI ArfApp
   VERSION 1.0
+  SOURCES
+    drawing_view.h
+    drawing_view.cpp
   QML_FILES
     qml/Main.qml
     qml/HomeScreen.qml
     qml/EditorScreen.qml
-    qml/DrawingCanvas.qml
     qml/Timeline.qml
     qml/ToolStrip.qml
 )
