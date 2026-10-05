@@ -272,11 +272,8 @@ void DrawingView::paint(QPainter* p) {
   }
 
   p->drawImage(0, 0, compose(frame_));
-  if (drawing_) {
-    p->setOpacity(current_.opacity);
-    p->drawImage(0, 0, live_);
-    p->setOpacity(1.0);
-  }
+  // Traço em andamento: desenhado como forma única e contínua (vetorial, na resolução da tela).
+  if (drawing_) brush::paintLive(*p, current_, previewColor(), QRect(0, 0, anim_.width, anim_.height));
 }
 
 // ---- traço ----------------------------------------------------------------
@@ -312,37 +309,15 @@ bool DrawingView::beginStroke(const QPointF& pos, float pressure) {
   current_.points.push_back({float(d.x()), float(d.y()), pressure});
   rawLast_ = d;
   rawPressure_ = pressure;
-
-  const QSize sz(anim_.width, anim_.height);
-  if (live_.size() != sz) live_ = QImage(sz, QImage::Format_ARGB32_Premultiplied);
-  live_.fill(Qt::transparent);
-  liveCum_.assign(1, 0.0);
-  liveSeg_ = 0;
-  if (current_.brush != arf::BrushType::Ink) {  // a tinta começa fina e engrossa
-    QPainter lp(&live_);
-    brush::configure(lp, current_);
-    brush::paintDot(lp, current_, previewColor());
-  }
   drawing_ = true;
   update();
   return true;
 }
 
-void DrawingView::addLivePoint(const QPointF& docPt, float pressure) {
+void DrawingView::addPoint(const QPointF& docPt, float pressure) {
   const auto& last = current_.points.back();
-  const double dist = QLineF(QPointF(last.x, last.y), docPt).length();
-  if (dist < 0.6) return;
+  if (QLineF(QPointF(last.x, last.y), docPt).length() < 0.6) return;
   current_.points.push_back({float(docPt.x()), float(docPt.y()), pressure});
-  liveCum_.push_back(liveCum_.back() + dist);
-
-  QPainter lp(&live_);
-  brush::configure(lp, current_);
-  const QColor col = previewColor();
-  // O segmento i precisa do ponto i+2 para a curva ficar suave.
-  while (liveSeg_ + 2 < int(current_.points.size())) {
-    brush::paintSegment(lp, current_, liveSeg_, liveCum_, -1, col);
-    ++liveSeg_;
-  }
   update();
 }
 
@@ -356,7 +331,7 @@ void DrawingView::extendStroke(const QPointF& pos, float pressure) {
   const auto last = current_.points.back();
   const QPointF np(last.x + (raw.x() - last.x) * k, last.y + (raw.y() - last.y) * k);
   const float npr = last.pressure + (pressure - last.pressure) * 0.5f;
-  addLivePoint(np, npr);
+  addPoint(np, npr);
 }
 
 void DrawingView::finishStabilizer() {
@@ -365,7 +340,7 @@ void DrawingView::finishStabilizer() {
     const auto last = current_.points.back();
     const QPointF cur(last.x, last.y);
     if (QLineF(cur, rawLast_).length() <= 0.6) break;
-    addLivePoint(cur + (rawLast_ - cur) * k, rawPressure_);
+    addPoint(cur + (rawLast_ - cur) * k, rawPressure_);
   }
 }
 
