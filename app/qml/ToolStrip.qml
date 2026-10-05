@@ -10,7 +10,7 @@ ListView {
     orientation: vertical ? ListView.Vertical : ListView.Horizontal
     clip: true
     spacing: 4
-    model: ["Pencil", "Brush", "Eraser"]
+    model: ["Pencil", "Ink", "Brush", "Eraser"]
 
     delegate: ToolButton {
         required property string modelData

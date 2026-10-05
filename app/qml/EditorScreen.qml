@@ -22,6 +22,10 @@ Page {
                 text: "Quadro " + canvas.frame + " / " + canvas.frameCount
                 Layout.fillWidth: true
             }
+            ToolButton {
+                text: Math.round(canvas.zoom * 100) + "%"
+                onClicked: canvas.resetView()
+            }
             ToolButton { text: "↶"; enabled: canvas.canUndo; onClicked: canvas.undo() }
             ToolButton { text: "↷"; enabled: canvas.canRedo; onClicked: canvas.redo() }
             ToolButton { text: canvas.playing ? "❚❚" : "▶"; onClicked: canvas.togglePlay() }
@@ -54,7 +58,7 @@ Page {
                 Layout.fillHeight: true
             }
 
-            // Cores, tamanho e onion skin
+            // Cores, tamanho e ajustes do pincel
             RowLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 8
@@ -77,12 +81,7 @@ Page {
                     Layout.fillWidth: true
                     onMoved: canvas.brushSize = value
                 }
-                ToolButton {
-                    text: "Cebola"
-                    checkable: true
-                    checked: canvas.onionSkin
-                    onToggled: canvas.onionSkin = checked
-                }
+                ToolButton { text: "⚙"; onClicked: brushPopup.open() }
             }
 
             ToolStrip {
@@ -131,6 +130,49 @@ Page {
                 canvas: canvas
                 revision: canvas.revision
                 onFrameSelected: (f) => canvas.frame = f
+            }
+        }
+    }
+
+    // Ajustes do pincel
+    Popup {
+        id: brushPopup
+        parent: Overlay.overlay
+        width: Math.min(root.width - 32, 380)
+        x: (parent.width - width) / 2
+        y: parent.height - height - 150
+        padding: 16
+        modal: false
+        closePolicy: Popup.CloseOnPressOutside | Popup.CloseOnEscape
+
+        contentItem: ColumnLayout {
+            spacing: 8
+            Label { text: "Ajustes do pincel"; font.bold: true }
+            RowLayout {
+                Label { text: "Opacidade"; Layout.preferredWidth: 100 }
+                Slider {
+                    from: 0.05; to: 1.0; value: canvas.brushOpacity
+                    Layout.fillWidth: true
+                    onMoved: canvas.brushOpacity = value
+                }
+            }
+            RowLayout {
+                Label { text: "Estabilizador"; Layout.preferredWidth: 100 }
+                Slider {
+                    from: 0.0; to: 1.0; value: canvas.stabilizer
+                    Layout.fillWidth: true
+                    onMoved: canvas.stabilizer = value
+                }
+            }
+            Switch {
+                text: "Suavizar traço"
+                checked: canvas.smoothStrokes
+                onToggled: canvas.smoothStrokes = checked
+            }
+            Switch {
+                text: "Onion skin"
+                checked: canvas.onionSkin
+                onToggled: canvas.onionSkin = checked
             }
         }
     }

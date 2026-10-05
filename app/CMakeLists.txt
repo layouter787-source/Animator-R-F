@@ -14,6 +14,8 @@ qt_add_qml_module(AnimatorRF
   SOURCES
     drawing_view.h
     drawing_view.cpp
+    brush_engine.h
+    brush_engine.cpp
   QML_FILES
     qml/Main.qml
     qml/HomeScreen.qml

@@ -50,10 +50,12 @@ int main() {
   CHECK(anim.hasKey(l0, 3) && !anim.hasKey(l0, 4));
   CHECK(anim.drawingAt(l0, 2) == nullptr);                    // antes da chave
   CHECK(anim.drawingAt(l0, 5) == anim.drawingAt(l0, 3));      // hold
+  CHECK(anim.keyFrameAt(l0, 2) == 0 && anim.keyFrameAt(l0, 5) == 3);
   CHECK(anim.addStroke(l0, 3, dot(2, 2)));
   CHECK(anim.drawingAt(l0, 3)->strokes.size() == 2);
   anim.insertBlankKey(l0, 6);
   CHECK(anim.drawingAt(l0, 7)->strokes.empty());              // chave em branco corta o hold
+  CHECK(anim.keyFrameAt(l0, 7) == 6);
   CHECK(anim.undo());
   CHECK(anim.drawingAt(l0, 3)->strokes.size() == 1);
   CHECK(anim.redo());
@@ -64,6 +66,10 @@ int main() {
   anim.layer(l0)->locked = true;
   CHECK(!anim.addStroke(l0, 1, dot(0, 0)));
   CHECK(!anim.addStroke(l0, 999, dot(0, 0)));
+
+  // Valores padrão do traço: suave (anti-serrilhado ligado) e opaco.
+  arf::Stroke d = dot(0, 0);
+  CHECK(d.antialias && d.opacity == 1.0f && d.hardness == 1.0f);
 
   if (failures == 0) std::puts("OK");
   return failures == 0 ? 0 : 1;

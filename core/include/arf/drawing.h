@@ -10,10 +10,17 @@ struct Point {
   float x = 0, y = 0, pressure = 1;
 };
 
+// Tipos de pincel: lápis (traço firme), tinta (pressão + afinamento nas pontas), macio (bordas suaves).
+enum class BrushType : std::uint8_t { Pencil, Ink, Soft };
+
 struct Stroke {
   std::vector<Point> points;
   std::uint32_t color = 0xFF111111;  // ARGB
   float size = 4;
+  BrushType brush = BrushType::Pencil;
+  float hardness = 1.0f;  // 1 = borda dura; menor = mais macio (só no pincel macio)
+  float opacity = 1.0f;
+  bool antialias = true;  // false = traço pixelado
   bool eraser = false;
 };
 
@@ -43,6 +50,7 @@ public:
   const std::vector<Layer>& layers() const { return layers_; }
 
   const Drawing* drawingAt(int layer, int frame) const;
+  int keyFrameAt(int layer, int frame) const;  // quadro-chave que vale neste quadro (0 = nenhum)
   bool hasKey(int layer, int frame) const;
   void insertBlankKey(int layer, int frame);
   bool addStroke(int layer, int frame, Stroke stroke);
