@@ -1,11 +1,25 @@
 #include "drawing_view.h"
 
+#include <QInputDevice>
+#include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QTouchEvent>
+#include <QWheelEvent>
 #include <algorithm>
+#include <cmath>
 
 namespace {
+
+constexpr int kMaxCached = 16;
+constexpr qreal kMinZoom = 0.2;
+constexpr qreal kMaxZoom = 16.0;
+
+// Largura do traço conforme a pressão (1.0 = largura cheia).
+float widthFor(const arf::Stroke& s, float pressure) {
+  return s.size * (0.2f + 0.8f * std::clamp(pressure, 0.0f, 1.0f));
+}
 
 void paintStroke(QPainter& p, const arf::Stroke& s, bool preview) {
   if (s.points.empty()) return;
@@ -15,29 +29,52 @@ void paintStroke(QPainter& p, const arf::Stroke& s, bool preview) {
     if (preview) col = Qt::white;
     else p.setCompositionMode(QPainter::CompositionMode_Clear);
   }
+  const auto pt = [&](size_t i) { return QPointF(s.points[i].x, s.points[i].y); };
+  const float p0 = s.points[0].pressure;
+
   if (s.points.size() == 1) {
     p.setPen(Qt::NoPen);
     p.setBrush(col);
-    p.drawEllipse(QPointF(s.points[0].x, s.points[0].y), s.size / 2, s.size / 2);
+    const qreal r = widthFor(s, p0) / 2;
+    p.drawEllipse(pt(0), r, r);
   } else {
-    const auto pt = [&](size_t i) { return QPointF(s.points[i].x, s.points[i].y); };
-    QPainterPath path;
-    path.moveTo(pt(0));
-    for (size_t i = 1; i + 1 < s.points.size(); ++i) path.quadTo(pt(i), (pt(i) + pt(i + 1)) / 2);
-    path.lineTo(pt(s.points.size() - 1));
-    p.setPen(QPen(col, s.size, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    p.setBrush(Qt::NoBrush);
-    p.drawPath(path);
+    bool uniform = true;
+    for (const auto& q : s.points)
+      if (std::abs(q.pressure - p0) > 0.02f) { uniform = false; break; }
+
+    if (uniform) {
+      QPainterPath path;
+      path.moveTo(pt(0));
+      for (size_t i = 1; i + 1 < s.points.size(); ++i) path.quadTo(pt(i), (pt(i) + pt(i + 1)) / 2);
+      path.lineTo(pt(s.points.size() - 1));
+      p.setPen(QPen(col, widthFor(s, p0), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+      p.setBrush(Qt::NoBrush);
+      p.drawPath(path);
+    } else {
+      // Pressão variável: um segmento por par de pontos, com largura própria.
+      for (size_t i = 1; i < s.points.size(); ++i) {
+        const float pr = (s.points[i - 1].pressure + s.points[i].pressure) / 2;
+        p.setPen(QPen(col, widthFor(s, pr), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.drawLine(pt(i - 1), pt(i));
+      }
+    }
   }
   p.restore();
 }
 
-constexpr int kMaxCached = 16;
+// Caneta usa a pressão real; dedo e mouse usam pressão cheia.
+float pressureOf(const QMouseEvent* e) {
+  const auto* dev = e->pointingDevice();
+  if (dev && dev->type() == QInputDevice::DeviceType::Stylus && !e->points().isEmpty())
+    return std::clamp(float(e->points().first().pressure()), 0.05f, 1.0f);
+  return 1.0f;
+}
 
 }  // namespace
 
 DrawingView::DrawingView(QQuickItem* parent) : QQuickPaintedItem(parent) {
-  setAcceptedMouseButtons(Qt::LeftButton);
+  setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton | Qt::MiddleButton);
+  setAcceptTouchEvents(true);
   setAntialiasing(true);
   setOpaquePainting(true);
   anim_.addLayer("Camada 1");
@@ -55,6 +92,7 @@ QStringList DrawingView::layerNames() const {
 void DrawingView::setFrame(int f) {
   f = std::clamp(f, 1, anim_.frameCount);
   if (f == frame_) return;
+  cancelStroke();
   frame_ = f;
   emit frameChanged();
   update();
@@ -63,6 +101,7 @@ void DrawingView::setFrame(int f) {
 void DrawingView::setActiveLayer(int i) {
   i = std::clamp(i, 0, int(anim_.layers().size()) - 1);
   if (i == activeLayer_) return;
+  cancelStroke();
   activeLayer_ = i;
   ++revision_;
   emit layersChanged();
@@ -132,10 +171,19 @@ void DrawingView::redo() {
 }
 
 void DrawingView::togglePlay() {
+  cancelStroke();
   playing_ = !playing_;
   if (playing_) playTimer_.start(1000 / anim_.fps);
   else playTimer_.stop();
   emit playingChanged();
+  update();
+}
+
+void DrawingView::resetView() {
+  zoom_ = 1.0;
+  rotation_ = 0.0;
+  pan_ = QPointF();
+  emit viewChanged();
   update();
 }
 
@@ -146,16 +194,37 @@ void DrawingView::invalidate() {
   update();
 }
 
-qreal DrawingView::pageScale() const {
+// ---- vista ----------------------------------------------------------------
+
+qreal DrawingView::baseScale() const {
   return std::min(width() / anim_.width, height() / anim_.height);
 }
 
-QPointF DrawingView::toDoc(const QPointF& p) const {
-  const qreal s = pageScale();
-  const qreal ox = (width() - anim_.width * s) / 2;
-  const qreal oy = (height() - anim_.height * s) / 2;
-  return QPointF((p.x() - ox) / s, (p.y() - oy) / s);
+QTransform DrawingView::viewTransform() const {
+  const qreal s = baseScale() * zoom_;
+  QTransform t;
+  t.translate(width() / 2 + pan_.x(), height() / 2 + pan_.y());
+  t.rotate(rotation_);
+  t.scale(s, s);
+  t.translate(-anim_.width / 2.0, -anim_.height / 2.0);
+  return t;
 }
+
+QPointF DrawingView::toDoc(const QPointF& p) const {
+  bool ok = false;
+  const QTransform inv = viewTransform().inverted(&ok);
+  return ok ? inv.map(p) : p;
+}
+
+void DrawingView::zoomAbout(const QPointF& center, qreal factor) {
+  const QPointF docPt = toDoc(center);
+  zoom_ = std::clamp(zoom_ * factor, kMinZoom, kMaxZoom);
+  pan_ += center - viewTransform().map(docPt);  // mantém o ponto sob o dedo/cursor
+  emit viewChanged();
+  update();
+}
+
+// ---- composição -----------------------------------------------------------
 
 QImage DrawingView::compose(int frame) {
   if (auto it = cache_.constFind(frame); it != cache_.constEnd()) return *it;
@@ -198,9 +267,9 @@ QImage DrawingView::onionImage(int frame, const QColor& tint) {
 
 void DrawingView::paint(QPainter* p) {
   p->fillRect(boundingRect(), QColor("#2b2d31"));
-  const qreal s = pageScale();
-  p->translate((width() - anim_.width * s) / 2, (height() - anim_.height * s) / 2);
-  p->scale(s, s);
+  p->setRenderHint(QPainter::SmoothPixmapTransform);
+  p->setRenderHint(QPainter::Antialiasing);
+  p->setTransform(viewTransform());
   p->fillRect(QRectF(0, 0, anim_.width, anim_.height), Qt::white);
 
   if (onion_ && !playing_) {
@@ -211,44 +280,138 @@ void DrawingView::paint(QPainter* p) {
   }
 
   p->drawImage(0, 0, compose(frame_));
-  if (drawing_) {
-    p->setRenderHint(QPainter::Antialiasing);
-    paintStroke(*p, current_, true);
-  }
+  if (drawing_) paintStroke(*p, current_, true);
 }
 
-void DrawingView::mousePressEvent(QMouseEvent* e) {
-  const arf::Layer* l = (activeLayer_ < int(anim_.layers().size())) ? &anim_.layers()[activeLayer_] : nullptr;
-  if (!l || !l->visible || l->locked || playing_) {
-    e->ignore();
-    return;
-  }
+// ---- traço ----------------------------------------------------------------
+
+bool DrawingView::beginStroke(const QPointF& pos, float pressure) {
+  const arf::Layer* l =
+      (activeLayer_ < int(anim_.layers().size())) ? &anim_.layers()[activeLayer_] : nullptr;
+  if (!l || !l->visible || l->locked || playing_) return false;
   const float mul = tool_ == "Brush" ? 1.8f : (tool_ == "Eraser" ? 2.5f : 1.0f);
   current_ = arf::Stroke{};
   current_.size = float(brushSize_) * mul;
   current_.eraser = tool_ == "Eraser";
   current_.color = color_.rgba();
-  const QPointF d = toDoc(e->position());
-  current_.points.push_back({float(d.x()), float(d.y()), 1.0f});
+  const QPointF d = toDoc(pos);
+  current_.points.push_back({float(d.x()), float(d.y()), pressure});
   drawing_ = true;
   update();
-  e->accept();
+  return true;
 }
 
-void DrawingView::mouseMoveEvent(QMouseEvent* e) {
+void DrawingView::extendStroke(const QPointF& pos, float pressure) {
   if (!drawing_) return;
-  const QPointF d = toDoc(e->position());
+  const QPointF d = toDoc(pos);
   const auto& last = current_.points.back();
   if (std::abs(d.x() - last.x) + std::abs(d.y() - last.y) < 0.5) return;
-  current_.points.push_back({float(d.x()), float(d.y()), 1.0f});
+  current_.points.push_back({float(d.x()), float(d.y()), pressure});
   update();
 }
 
-void DrawingView::mouseReleaseEvent(QMouseEvent* e) {
+void DrawingView::endStroke() {
   if (!drawing_) return;
   drawing_ = false;
   anim_.addStroke(activeLayer_, frame_, std::move(current_));
   current_ = arf::Stroke{};
   invalidate();
+}
+
+void DrawingView::cancelStroke() {
+  if (!drawing_) return;
+  drawing_ = false;
+  current_ = arf::Stroke{};
+  update();
+}
+
+// ---- entrada --------------------------------------------------------------
+
+void DrawingView::mousePressEvent(QMouseEvent* e) {
+  if (e->button() != Qt::LeftButton) {  // botão direito/meio arrasta a vista (desktop)
+    panning_ = true;
+    lastMouse_ = e->position();
+    e->accept();
+    return;
+  }
+  if (beginStroke(e->position(), pressureOf(e))) e->accept();
+  else e->ignore();
+}
+
+void DrawingView::mouseMoveEvent(QMouseEvent* e) {
+  if (panning_) {
+    pan_ += e->position() - lastMouse_;
+    lastMouse_ = e->position();
+    emit viewChanged();
+    update();
+    return;
+  }
+  extendStroke(e->position(), pressureOf(e));
+}
+
+void DrawingView::mouseReleaseEvent(QMouseEvent* e) {
+  if (panning_) {
+    panning_ = false;
+    e->accept();
+    return;
+  }
+  endStroke();
+  e->accept();
+}
+
+void DrawingView::wheelEvent(QWheelEvent* e) {
+  zoomAbout(e->position(), std::pow(1.0015, e->angleDelta().y()));
+  e->accept();
+}
+
+void DrawingView::touchEvent(QTouchEvent* e) {
+  if (e->type() == QEvent::TouchCancel) {
+    cancelStroke();
+    gesture_ = false;
+    e->accept();
+    return;
+  }
+
+  const auto& pts = e->points();
+  QList<const QEventPoint*> active;
+  for (const auto& p : pts)
+    if (p.state() != QEventPoint::Released) active.append(&p);
+
+  if (active.size() >= 2) {
+    // Dois dedos: zoom + pan + rotação em torno do ponto entre os dedos.
+    cancelStroke();
+    gesture_ = true;
+    const QPointF a = active[0]->position(), b = active[1]->position();
+    const QPointF pa = active[0]->lastPosition(), pb = active[1]->lastPosition();
+    const qreal d = QLineF(a, b).length(), pd = QLineF(pa, pb).length();
+    if (d > 1 && pd > 1) {
+      const QPointF c = (a + b) / 2, pc = (pa + pb) / 2;
+      qreal dAng = std::atan2(b.y() - a.y(), b.x() - a.x()) - std::atan2(pb.y() - pa.y(), pb.x() - pa.x());
+      while (dAng > M_PI) dAng -= 2 * M_PI;
+      while (dAng < -M_PI) dAng += 2 * M_PI;
+
+      const QPointF docPt = toDoc(pc);
+      zoom_ = std::clamp(zoom_ * d / pd, kMinZoom, kMaxZoom);
+      rotation_ += dAng * 180.0 / M_PI;
+      pan_ += c - viewTransform().map(docPt);
+      emit viewChanged();
+      update();
+    }
+    e->accept();
+    return;
+  }
+
+  if (active.isEmpty()) {  // todos os dedos saíram
+    if (gesture_) gesture_ = false;
+    else endStroke();
+    e->accept();
+    return;
+  }
+
+  if (!gesture_) {  // um dedo: desenha
+    const QEventPoint& p = *active[0];
+    if (p.state() == QEventPoint::Pressed) beginStroke(p.position(), 1.0f);
+    else if (p.state() == QEventPoint::Updated) extendStroke(p.position(), 1.0f);
+  }
   e->accept();
 }
