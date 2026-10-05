@@ -22,6 +22,12 @@ quint64 layerKey(int layer, int keyFrame) {
   return (quint64(quint32(layer)) << 32) | quint64(quint32(keyFrame));
 }
 
+// Pincel MyPaint ou pincel interno, conforme o traço.
+void applyStroke(QImage& layer, const arf::Stroke& s) {
+  if (!s.preset.empty()) mp::paintStroke(layer, s);
+  else brush::compositeStroke(layer, s);
+}
+
 // Caneta usa a pressão real; dedo e mouse usam pressão cheia.
 float pressureOf(const QMouseEvent* e) {
   const auto* dev = e->pointingDevice();
@@ -72,6 +78,12 @@ void DrawingView::setTool(const QString& t) {
   if (t == tool_) return;
   tool_ = t;
   emit toolChanged();
+}
+
+void DrawingView::setPreset(const QString& id) {
+  if (id == preset_) return;
+  preset_ = id;
+  emit presetChanged();
 }
 
 void DrawingView::setColor(const QColor& c) {
@@ -218,7 +230,7 @@ QImage DrawingView::layerImage(int layer, int frame) {
   QImage img(QSize(anim_.width, anim_.height), QImage::Format_ARGB32_Premultiplied);
   img.fill(Qt::transparent);
   if (const arf::Drawing* d = anim_.drawingAt(layer, frame))
-    for (const auto& s : d->strokes) brush::compositeStroke(img, s);
+    for (const auto& s : d->strokes) applyStroke(img, s);
   if (layerImgs_.size() >= kMaxLayerImages) layerImgs_.clear();
   layerImgs_.insert(id, img);
   return img;
@@ -272,8 +284,10 @@ void DrawingView::paint(QPainter* p) {
   }
 
   p->drawImage(0, 0, compose(frame_));
-  // Traço em andamento: desenhado como forma única e contínua (vetorial, na resolução da tela).
-  if (drawing_) brush::paintLive(*p, current_, previewColor(), QRect(0, 0, anim_.width, anim_.height));
+  if (drawing_) {
+    if (live_) p->drawImage(0, 0, liveImg_);  // pincel MyPaint: pintado ponto a ponto
+    else brush::paintLive(*p, current_, previewColor(), QRect(0, 0, anim_.width, anim_.height));
+  }
 }
 
 // ---- traço ----------------------------------------------------------------
@@ -288,7 +302,11 @@ bool DrawingView::beginStroke(const QPointF& pos, float pressure) {
   if (!l || !l->visible || l->locked || playing_) return false;
 
   current_ = arf::Stroke{};
-  if (tool_ == "Ink") {
+  const bool usePreset = tool_ == "Preset" && mp::hasPreset(preset_);
+  if (usePreset) {
+    current_.preset = preset_.toStdString();
+    current_.size = float(brushSize_);
+  } else if (tool_ == "Ink") {
     current_.brush = arf::BrushType::Ink;
     current_.size = float(brushSize_);
   } else if (tool_ == "Brush") {
@@ -306,9 +324,19 @@ bool DrawingView::beginStroke(const QPointF& pos, float pressure) {
   current_.color = color_.rgba();
 
   const QPointF d = toDoc(pos);
-  current_.points.push_back({float(d.x()), float(d.y()), pressure});
+  current_.points.push_back({float(d.x()), float(d.y()), pressure, 0.0f});
   rawLast_ = d;
   rawPressure_ = pressure;
+  strokeClock_.start();
+
+  live_.reset();
+  if (usePreset) {
+    const QSize sz(anim_.width, anim_.height);
+    if (liveImg_.size() != sz) liveImg_ = QImage(sz, QImage::Format_ARGB32_Premultiplied);
+    liveImg_.fill(Qt::transparent);
+    live_ = mp::beginLive(current_, &liveImg_);
+    if (!live_) current_.preset.clear();  // sem o motor: cai no pincel interno
+  }
   drawing_ = true;
   update();
   return true;
@@ -317,7 +345,9 @@ bool DrawingView::beginStroke(const QPointF& pos, float pressure) {
 void DrawingView::addPoint(const QPointF& docPt, float pressure) {
   const auto& last = current_.points.back();
   if (QLineF(QPointF(last.x, last.y), docPt).length() < 0.6) return;
-  current_.points.push_back({float(docPt.x()), float(docPt.y()), pressure});
+  const float t = float(strokeClock_.nsecsElapsed() / 1e9);
+  current_.points.push_back({float(docPt.x()), float(docPt.y()), pressure, t});
+  if (live_) live_->add(current_.points.back());
   update();
 }
 
@@ -348,11 +378,12 @@ void DrawingView::endStroke() {
   if (!drawing_) return;
   finishStabilizer();
   drawing_ = false;
+  live_.reset();
   const int layer = activeLayer_, frame = frame_;
   if (anim_.addStroke(layer, frame, current_)) {
     // Pinta só o traço novo na imagem da camada, sem refazer o desenho todo.
     auto it = layerImgs_.find(layerKey(layer, frame));
-    if (it != layerImgs_.end()) brush::compositeStroke(*it, current_);
+    if (it != layerImgs_.end()) applyStroke(*it, current_);
     cache_.clear();
     ++revision_;
     emit revisionChanged();
@@ -364,6 +395,7 @@ void DrawingView::endStroke() {
 void DrawingView::cancelStroke() {
   if (!drawing_) return;
   drawing_ = false;
+  live_.reset();
   current_ = arf::Stroke{};
   update();
 }
