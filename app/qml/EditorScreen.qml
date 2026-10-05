@@ -22,6 +22,10 @@ Page {
                 text: "Quadro " + canvas.frame + " / " + canvas.frameCount
                 Layout.fillWidth: true
             }
+            ToolButton {
+                text: Math.round(canvas.zoom * 100) + "%"
+                onClicked: canvas.resetView()
+            }
             ToolButton { text: "↶"; enabled: canvas.canUndo; onClicked: canvas.undo() }
             ToolButton { text: "↷"; enabled: canvas.canRedo; onClicked: canvas.redo() }
             ToolButton { text: canvas.playing ? "❚❚" : "▶"; onClicked: canvas.togglePlay() }
