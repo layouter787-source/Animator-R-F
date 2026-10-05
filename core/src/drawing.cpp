@@ -16,12 +16,18 @@ Layer* Animation::layer(int index) {
   return (index >= 0 && index < int(layers_.size())) ? &layers_[index] : nullptr;
 }
 
-const Drawing* Animation::drawingAt(int layer, int frame) const {
-  if (layer < 0 || layer >= int(layers_.size())) return nullptr;
+int Animation::keyFrameAt(int layer, int frame) const {
+  if (layer < 0 || layer >= int(layers_.size())) return 0;
   const auto& keys = layers_[layer].keys;
   auto it = keys.upper_bound(frame);
-  if (it == keys.begin()) return nullptr;
-  return &std::prev(it)->second;
+  if (it == keys.begin()) return 0;
+  return std::prev(it)->first;
+}
+
+const Drawing* Animation::drawingAt(int layer, int frame) const {
+  const int key = keyFrameAt(layer, frame);
+  if (key == 0) return nullptr;
+  return &layers_[layer].keys.at(key);
 }
 
 bool Animation::hasKey(int layer, int frame) const {
