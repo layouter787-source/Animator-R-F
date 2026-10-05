@@ -10,8 +10,6 @@
 #include <QTransform>
 #include <QtQml/qqmlregistration.h>
 
-#include <vector>
-
 #include "arf/drawing.h"
 
 // Canvas de animação: desenha traços nas camadas, mostra onion skin e reproduz.
@@ -107,7 +105,7 @@ private:
 
   bool beginStroke(const QPointF& pos, float pressure);
   void extendStroke(const QPointF& pos, float pressure);
-  void addLivePoint(const QPointF& docPt, float pressure);
+  void addPoint(const QPointF& docPt, float pressure);
   void finishStabilizer();
   void endStroke();
   void cancelStroke();
@@ -122,9 +120,6 @@ private:
   arf::Stroke current_;
   QHash<int, QImage> cache_;                 // quadros já compostos (e onion skin)
   QHash<quint64, QImage> layerImgs_;         // imagem de cada (camada, quadro-chave)
-  QImage live_;                              // traço em andamento
-  std::vector<double> liveCum_;
-  int liveSeg_ = 0;
   QTimer playTimer_;
   int frame_ = 1;
   int activeLayer_ = 0;
