@@ -4,62 +4,22 @@
 #include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QPainterPath>
 #include <QTouchEvent>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
 
+#include "brush_engine.h"
+
 namespace {
 
 constexpr int kMaxCached = 16;
+constexpr int kMaxLayerImages = 24;
 constexpr qreal kMinZoom = 0.2;
 constexpr qreal kMaxZoom = 16.0;
 
-// Largura do traço conforme a pressão (1.0 = largura cheia).
-float widthFor(const arf::Stroke& s, float pressure) {
-  return s.size * (0.2f + 0.8f * std::clamp(pressure, 0.0f, 1.0f));
-}
-
-void paintStroke(QPainter& p, const arf::Stroke& s, bool preview) {
-  if (s.points.empty()) return;
-  QColor col = QColor::fromRgba(s.color);
-  p.save();
-  if (s.eraser) {
-    if (preview) col = Qt::white;
-    else p.setCompositionMode(QPainter::CompositionMode_Clear);
-  }
-  const auto pt = [&](size_t i) { return QPointF(s.points[i].x, s.points[i].y); };
-  const float p0 = s.points[0].pressure;
-
-  if (s.points.size() == 1) {
-    p.setPen(Qt::NoPen);
-    p.setBrush(col);
-    const qreal r = widthFor(s, p0) / 2;
-    p.drawEllipse(pt(0), r, r);
-  } else {
-    bool uniform = true;
-    for (const auto& q : s.points)
-      if (std::abs(q.pressure - p0) > 0.02f) { uniform = false; break; }
-
-    if (uniform) {
-      QPainterPath path;
-      path.moveTo(pt(0));
-      for (size_t i = 1; i + 1 < s.points.size(); ++i) path.quadTo(pt(i), (pt(i) + pt(i + 1)) / 2);
-      path.lineTo(pt(s.points.size() - 1));
-      p.setPen(QPen(col, widthFor(s, p0), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-      p.setBrush(Qt::NoBrush);
-      p.drawPath(path);
-    } else {
-      // Pressão variável: um segmento por par de pontos, com largura própria.
-      for (size_t i = 1; i < s.points.size(); ++i) {
-        const float pr = (s.points[i - 1].pressure + s.points[i].pressure) / 2;
-        p.setPen(QPen(col, widthFor(s, pr), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        p.drawLine(pt(i - 1), pt(i));
-      }
-    }
-  }
-  p.restore();
+quint64 layerKey(int layer, int keyFrame) {
+  return (quint64(quint32(layer)) << 32) | quint64(quint32(keyFrame));
 }
 
 // Caneta usa a pressão real; dedo e mouse usam pressão cheia.
@@ -127,6 +87,27 @@ void DrawingView::setBrushSize(qreal s) {
   emit brushSizeChanged();
 }
 
+void DrawingView::setBrushOpacity(qreal o) {
+  o = std::clamp<qreal>(o, 0.05, 1.0);
+  if (qFuzzyCompare(o, brushOpacity_)) return;
+  brushOpacity_ = o;
+  emit brushOpacityChanged();
+}
+
+void DrawingView::setStabilizer(qreal s) {
+  s = std::clamp<qreal>(s, 0.0, 1.0);
+  if (qFuzzyCompare(s + 1.0, stabilizer_ + 1.0)) return;
+  stabilizer_ = s;
+  emit stabilizerChanged();
+}
+
+void DrawingView::setSmoothStrokes(bool on) {
+  if (on == smoothStrokes_) return;
+  smoothStrokes_ = on;
+  emit smoothStrokesChanged();
+  update();
+}
+
 void DrawingView::setOnionSkin(bool on) {
   if (on == onion_) return;
   onion_ = on;
@@ -163,11 +144,11 @@ void DrawingView::insertBlankKey() {
 }
 
 void DrawingView::undo() {
-  if (anim_.undo()) invalidate();
+  if (anim_.undo()) invalidate(true);
 }
 
 void DrawingView::redo() {
-  if (anim_.redo()) invalidate();
+  if (anim_.redo()) invalidate(true);
 }
 
 void DrawingView::togglePlay() {
@@ -187,8 +168,9 @@ void DrawingView::resetView() {
   update();
 }
 
-void DrawingView::invalidate() {
+void DrawingView::invalidate(bool layersToo) {
   cache_.clear();
+  if (layersToo) layerImgs_.clear();
   ++revision_;
   emit revisionChanged();
   update();
@@ -226,23 +208,32 @@ void DrawingView::zoomAbout(const QPointF& center, qreal factor) {
 
 // ---- composição -----------------------------------------------------------
 
+// Imagem do desenho (quadro-chave) de uma camada, com todos os traços já pintados.
+QImage DrawingView::layerImage(int layer, int frame) {
+  const int key = anim_.keyFrameAt(layer, frame);
+  if (key == 0) return QImage();
+  const quint64 id = layerKey(layer, key);
+  if (auto it = layerImgs_.constFind(id); it != layerImgs_.constEnd()) return *it;
+
+  QImage img(QSize(anim_.width, anim_.height), QImage::Format_ARGB32_Premultiplied);
+  img.fill(Qt::transparent);
+  if (const arf::Drawing* d = anim_.drawingAt(layer, frame))
+    for (const auto& s : d->strokes) brush::compositeStroke(img, s);
+  if (layerImgs_.size() >= kMaxLayerImages) layerImgs_.clear();
+  layerImgs_.insert(id, img);
+  return img;
+}
+
 QImage DrawingView::compose(int frame) {
   if (auto it = cache_.constFind(frame); it != cache_.constEnd()) return *it;
-  const QSize sz(anim_.width, anim_.height);
-  QImage out(sz, QImage::Format_ARGB32_Premultiplied);
+  QImage out(QSize(anim_.width, anim_.height), QImage::Format_ARGB32_Premultiplied);
   out.fill(Qt::transparent);
   QPainter op(&out);
   for (int i = 0; i < int(anim_.layers().size()); ++i) {
     const auto& layer = anim_.layers()[i];
     if (!layer.visible) continue;
-    const arf::Drawing* d = anim_.drawingAt(i, frame);
-    if (!d || d->strokes.empty()) continue;
-    QImage li(sz, QImage::Format_ARGB32_Premultiplied);
-    li.fill(Qt::transparent);
-    QPainter lp(&li);
-    lp.setRenderHint(QPainter::Antialiasing);
-    for (const auto& s : d->strokes) paintStroke(lp, s, false);
-    lp.end();
+    const QImage li = layerImage(i, frame);
+    if (li.isNull()) continue;
     op.setOpacity(layer.opacity);
     op.drawImage(0, 0, li);
   }
@@ -267,8 +258,9 @@ QImage DrawingView::onionImage(int frame, const QColor& tint) {
 
 void DrawingView::paint(QPainter* p) {
   p->fillRect(boundingRect(), QColor("#2b2d31"));
-  p->setRenderHint(QPainter::SmoothPixmapTransform);
-  p->setRenderHint(QPainter::Antialiasing);
+  // Suavização ligada: amostragem bilinear ao dar zoom. Desligada: pixels nítidos.
+  p->setRenderHint(QPainter::SmoothPixmapTransform, smoothStrokes_);
+  p->setRenderHint(QPainter::Antialiasing, true);
   p->setTransform(viewTransform());
   p->fillRect(QRectF(0, 0, anim_.width, anim_.height), Qt::white);
 
@@ -280,42 +272,118 @@ void DrawingView::paint(QPainter* p) {
   }
 
   p->drawImage(0, 0, compose(frame_));
-  if (drawing_) paintStroke(*p, current_, true);
+  if (drawing_) {
+    p->setOpacity(current_.opacity);
+    p->drawImage(0, 0, live_);
+    p->setOpacity(1.0);
+  }
 }
 
 // ---- traço ----------------------------------------------------------------
+
+QColor DrawingView::previewColor() const {
+  return current_.eraser ? QColor(Qt::white) : QColor::fromRgba(current_.color);
+}
 
 bool DrawingView::beginStroke(const QPointF& pos, float pressure) {
   const arf::Layer* l =
       (activeLayer_ < int(anim_.layers().size())) ? &anim_.layers()[activeLayer_] : nullptr;
   if (!l || !l->visible || l->locked || playing_) return false;
-  const float mul = tool_ == "Brush" ? 1.8f : (tool_ == "Eraser" ? 2.5f : 1.0f);
+
   current_ = arf::Stroke{};
-  current_.size = float(brushSize_) * mul;
-  current_.eraser = tool_ == "Eraser";
+  if (tool_ == "Ink") {
+    current_.brush = arf::BrushType::Ink;
+    current_.size = float(brushSize_);
+  } else if (tool_ == "Brush") {
+    current_.brush = arf::BrushType::Soft;
+    current_.size = float(brushSize_) * 2.2f;
+    current_.hardness = 0.3f;
+  } else if (tool_ == "Eraser") {
+    current_.size = float(brushSize_) * 2.5f;
+    current_.eraser = true;
+  } else {
+    current_.size = float(brushSize_) * 0.7f;
+  }
+  current_.opacity = current_.eraser ? 1.0f : float(brushOpacity_);
+  current_.antialias = smoothStrokes_;
   current_.color = color_.rgba();
+
   const QPointF d = toDoc(pos);
   current_.points.push_back({float(d.x()), float(d.y()), pressure});
+  rawLast_ = d;
+  rawPressure_ = pressure;
+
+  const QSize sz(anim_.width, anim_.height);
+  if (live_.size() != sz) live_ = QImage(sz, QImage::Format_ARGB32_Premultiplied);
+  live_.fill(Qt::transparent);
+  liveCum_.assign(1, 0.0);
+  liveSeg_ = 0;
+  if (current_.brush != arf::BrushType::Ink) {  // a tinta começa fina e engrossa
+    QPainter lp(&live_);
+    brush::configure(lp, current_);
+    brush::paintDot(lp, current_, previewColor());
+  }
   drawing_ = true;
   update();
   return true;
 }
 
+void DrawingView::addLivePoint(const QPointF& docPt, float pressure) {
+  const auto& last = current_.points.back();
+  const double dist = QLineF(QPointF(last.x, last.y), docPt).length();
+  if (dist < 0.6) return;
+  current_.points.push_back({float(docPt.x()), float(docPt.y()), pressure});
+  liveCum_.push_back(liveCum_.back() + dist);
+
+  QPainter lp(&live_);
+  brush::configure(lp, current_);
+  const QColor col = previewColor();
+  // O segmento i precisa do ponto i+2 para a curva ficar suave.
+  while (liveSeg_ + 2 < int(current_.points.size())) {
+    brush::paintSegment(lp, current_, liveSeg_, liveCum_, -1, col);
+    ++liveSeg_;
+  }
+  update();
+}
+
 void DrawingView::extendStroke(const QPointF& pos, float pressure) {
   if (!drawing_) return;
-  const QPointF d = toDoc(pos);
-  const auto& last = current_.points.back();
-  if (std::abs(d.x() - last.x) + std::abs(d.y() - last.y) < 0.5) return;
-  current_.points.push_back({float(d.x()), float(d.y()), pressure});
-  update();
+  const QPointF raw = toDoc(pos);
+  rawLast_ = raw;
+  rawPressure_ = pressure;
+  // Estabilizador: a ponta do traço persegue o dedo/caneta com atraso (média exponencial).
+  const double k = 1.0 - 0.92 * stabilizer_;
+  const auto last = current_.points.back();
+  const QPointF np(last.x + (raw.x() - last.x) * k, last.y + (raw.y() - last.y) * k);
+  const float npr = last.pressure + (pressure - last.pressure) * 0.5f;
+  addLivePoint(np, npr);
+}
+
+void DrawingView::finishStabilizer() {
+  const double k = std::max(0.35, 1.0 - 0.92 * stabilizer_);
+  for (int i = 0; i < 40; ++i) {  // alcança o ponto final real
+    const auto last = current_.points.back();
+    const QPointF cur(last.x, last.y);
+    if (QLineF(cur, rawLast_).length() <= 0.6) break;
+    addLivePoint(cur + (rawLast_ - cur) * k, rawPressure_);
+  }
 }
 
 void DrawingView::endStroke() {
   if (!drawing_) return;
+  finishStabilizer();
   drawing_ = false;
-  anim_.addStroke(activeLayer_, frame_, std::move(current_));
+  const int layer = activeLayer_, frame = frame_;
+  if (anim_.addStroke(layer, frame, current_)) {
+    // Pinta só o traço novo na imagem da camada, sem refazer o desenho todo.
+    auto it = layerImgs_.find(layerKey(layer, frame));
+    if (it != layerImgs_.end()) brush::compositeStroke(*it, current_);
+    cache_.clear();
+    ++revision_;
+    emit revisionChanged();
+  }
   current_ = arf::Stroke{};
-  invalidate();
+  update();
 }
 
 void DrawingView::cancelStroke() {
