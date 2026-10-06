@@ -1,20 +1,25 @@
 #include "drawing_view.h"
 
+#include <QBuffer>
+#include <QFile>
 #include <QInputDevice>
 #include <QLineF>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QTouchEvent>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
 
 #include "brush_engine.h"
+#include "gif_writer.h"
+#include "project_io.h"
+#include "project_store.h"
+#include "zip_writer.h"
 
 namespace {
 
-constexpr int kMaxCached = 16;
-constexpr int kMaxLayerImages = 24;
 constexpr qreal kMinZoom = 0.2;
 constexpr qreal kMaxZoom = 16.0;
 
@@ -36,6 +41,14 @@ float pressureOf(const QMouseEvent* e) {
   return 1.0f;
 }
 
+QByteArray pngBytes(const QImage& img) {
+  QByteArray data;
+  QBuffer buf(&data);
+  buf.open(QIODevice::WriteOnly);
+  img.save(&buf, "PNG");
+  return data;
+}
+
 }  // namespace
 
 DrawingView::DrawingView(QQuickItem* parent) : QQuickPaintedItem(parent) {
@@ -47,6 +60,22 @@ DrawingView::DrawingView(QQuickItem* parent) : QQuickPaintedItem(parent) {
   playTimer_.setTimerType(Qt::PreciseTimer);
   connect(&playTimer_, &QTimer::timeout, this,
           [this] { setFrame(frame_ % anim_.frameCount + 1); });
+  saveTimer_.setSingleShot(true);
+  saveTimer_.setInterval(1500);
+  connect(&saveTimer_, &QTimer::timeout, this, &DrawingView::saveNow);
+}
+
+DrawingView::~DrawingView() { saveNow(); }
+
+// Limites de cache proporcionais ao tamanho do projeto (4K ocupa muito mais memória que 720p).
+int DrawingView::maxCachedFrames() const {
+  const qint64 bytes = qint64(anim_.width) * anim_.height * 4;
+  return int(std::clamp<qint64>(160'000'000 / std::max<qint64>(bytes, 1), 2, 16));
+}
+
+int DrawingView::maxLayerImages() const {
+  const qint64 bytes = qint64(anim_.width) * anim_.height * 4;
+  return int(std::clamp<qint64>(200'000'000 / std::max<qint64>(bytes, 1), 4, 24));
 }
 
 QStringList DrawingView::layerNames() const {
@@ -133,6 +162,7 @@ int DrawingView::addLayer() {
   ++revision_;
   emit layersChanged();
   emit revisionChanged();
+  scheduleSave();
   return i;
 }
 
@@ -141,6 +171,7 @@ void DrawingView::toggleLayerVisible(int index) {
     l->visible = !l->visible;
     invalidate();
     emit layersChanged();
+    scheduleSave();
   }
 }
 
@@ -153,14 +184,21 @@ bool DrawingView::hasKey(int frame) const { return anim_.hasKey(activeLayer_, fr
 void DrawingView::insertBlankKey() {
   anim_.insertBlankKey(activeLayer_, frame_);
   invalidate();
+  scheduleSave();
 }
 
 void DrawingView::undo() {
-  if (anim_.undo()) invalidate(true);
+  if (anim_.undo()) {
+    invalidate(true);
+    scheduleSave();
+  }
 }
 
 void DrawingView::redo() {
-  if (anim_.redo()) invalidate(true);
+  if (anim_.redo()) {
+    invalidate(true);
+    scheduleSave();
+  }
 }
 
 void DrawingView::togglePlay() {
@@ -186,6 +224,116 @@ void DrawingView::invalidate(bool layersToo) {
   ++revision_;
   emit revisionChanged();
   update();
+}
+
+// ---- projeto --------------------------------------------------------------
+
+bool DrawingView::openProject(const QString& id) {
+  arf::Animation loaded;
+  QString name;
+  if (id.isEmpty() || !projectio::load(ProjectStore::projectFile(id), loaded, &name)) return false;
+
+  cancelStroke();
+  playTimer_.stop();
+  if (playing_) {
+    playing_ = false;
+    emit playingChanged();
+  }
+  saveTimer_.stop();
+
+  anim_ = std::move(loaded);
+  projectId_ = id;
+  projectName_ = name;
+  frame_ = 1;
+  activeLayer_ = 0;
+  cache_.clear();
+  layerImgs_.clear();
+  liveImg_ = QImage();
+  zoom_ = 1.0;
+  rotation_ = 0.0;
+  pan_ = QPointF();
+  ++revision_;
+  emit projectChanged();
+  emit frameChanged();
+  emit layersChanged();
+  emit revisionChanged();
+  emit viewChanged();
+  update();
+  return true;
+}
+
+void DrawingView::scheduleSave() {
+  if (!projectId_.isEmpty()) saveTimer_.start();
+}
+
+void DrawingView::saveNow() {
+  saveTimer_.stop();
+  if (projectId_.isEmpty()) return;
+  if (!projectio::save(ProjectStore::projectFile(projectId_), anim_, projectName_)) return;
+  renderFrame(1)
+      .scaled(360, 360, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+      .save(ProjectStore::thumbFile(projectId_), "PNG");
+  ProjectStore::writeMeta(projectId_, projectName_, anim_.width, anim_.height, anim_.fps,
+                          anim_.frameCount);
+}
+
+QImage DrawingView::renderFrame(int frame) {
+  QImage img(anim_.width, anim_.height, QImage::Format_RGB32);
+  img.fill(Qt::white);
+  QPainter p(&img);
+  p.drawImage(0, 0, compose(frame));
+  return img;
+}
+
+void DrawingView::exportAs(const QString& kind, const QUrl& url) {
+  if (busy_) return;
+  cancelStroke();
+  busy_ = true;
+  emit busyChanged();
+  // Deixa a tela mostrar "exportando" antes de começar o trabalho pesado.
+  QTimer::singleShot(50, this, [this, kind, url] {
+    QString message;
+    const bool ok = doExport(kind, url, &message);
+    busy_ = false;
+    emit busyChanged();
+    emit exportFinished(ok, message);
+  });
+}
+
+bool DrawingView::doExport(const QString& kind, const QUrl& url, QString* message) {
+  // No Android o destino é um endereço content:// escolhido pelo usuário.
+  const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+  QFile f(path);
+  if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    *message = QStringLiteral("Não foi possível criar o arquivo.");
+    return false;
+  }
+
+  QString base = projectName_;
+  base.replace(QRegularExpression("[^\\w\\-]+"), "_");
+  if (base.isEmpty()) base = "animacao";
+
+  bool ok = true;
+  if (kind == "png") {
+    ok = f.write(pngBytes(renderFrame(frame_))) > 0;
+  } else if (kind == "gif") {
+    const int delay = std::max(2, int(std::lround(100.0 / anim_.fps)));
+    const QByteArray gif = encodeGif(anim_.width, anim_.height, anim_.frameCount, delay,
+                                     [this](int i) { return renderFrame(i + 1); });
+    ok = !gif.isEmpty() && f.write(gif) == gif.size();
+  } else if (kind == "zip") {
+    ZipWriter zip(&f);
+    for (int i = 1; i <= anim_.frameCount && ok; ++i)
+      ok = zip.addFile(QString("%1_%2.png").arg(base).arg(i, 4, 10, QLatin1Char('0')),
+                       pngBytes(renderFrame(i)));
+    ok = ok && zip.finish();
+  } else {
+    *message = QStringLiteral("Formato de exportação desconhecido.");
+    return false;
+  }
+  f.close();
+  *message = ok ? QStringLiteral("Exportado com sucesso.") : QStringLiteral("Falha ao gravar o arquivo.");
+  return ok;
 }
 
 // ---- vista ----------------------------------------------------------------
@@ -231,7 +379,7 @@ QImage DrawingView::layerImage(int layer, int frame) {
   img.fill(Qt::transparent);
   if (const arf::Drawing* d = anim_.drawingAt(layer, frame))
     for (const auto& s : d->strokes) applyStroke(img, s);
-  if (layerImgs_.size() >= kMaxLayerImages) layerImgs_.clear();
+  if (layerImgs_.size() >= maxLayerImages()) layerImgs_.clear();
   layerImgs_.insert(id, img);
   return img;
 }
@@ -250,7 +398,7 @@ QImage DrawingView::compose(int frame) {
     op.drawImage(0, 0, li);
   }
   op.end();
-  if (cache_.size() >= kMaxCached) cache_.clear();
+  if (cache_.size() >= maxCachedFrames()) cache_.clear();
   cache_.insert(frame, out);
   return out;
 }
@@ -263,7 +411,7 @@ QImage DrawingView::onionImage(int frame, const QColor& tint) {
   tp.setCompositionMode(QPainter::CompositionMode_SourceIn);
   tp.fillRect(img.rect(), tint);
   tp.end();
-  if (cache_.size() >= kMaxCached) cache_.clear();
+  if (cache_.size() >= maxCachedFrames()) cache_.clear();
   cache_.insert(key, img);
   return img;
 }
@@ -387,6 +535,7 @@ void DrawingView::endStroke() {
     cache_.clear();
     ++revision_;
     emit revisionChanged();
+    scheduleSave();
   }
   current_ = arf::Stroke{};
   update();
