@@ -84,13 +84,24 @@ Page {
                 ToolButton { text: "⚙"; onClicked: brushPopup.open() }
             }
 
-            ToolStrip {
-                visible: root.compact
-                vertical: false
-                current: root.tool
-                onPicked: (t) => root.tool = t
+            RowLayout {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 48
+                spacing: 0
+                ToolStrip {
+                    visible: root.compact
+                    vertical: false
+                    current: root.tool
+                    onPicked: (t) => root.tool = t
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                }
+                Item { visible: !root.compact; Layout.fillWidth: true }
+                ToolButton {
+                    text: "Pincéis"
+                    highlighted: root.tool === "Preset"
+                    onClicked: libraryPopup.open()
+                }
             }
 
             // Camadas
@@ -173,6 +184,73 @@ Page {
                 text: "Onion skin"
                 checked: canvas.onionSkin
                 onToggled: canvas.onionSkin = checked
+            }
+        }
+    }
+
+    // Biblioteca de pincéis (MyPaint, domínio público)
+    Popup {
+        id: libraryPopup
+        parent: Overlay.overlay
+        width: Math.min(root.width - 24, 560)
+        height: Math.min(root.height * 0.7, 520)
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+        padding: 12
+        modal: true
+        closePolicy: Popup.CloseOnPressOutside | Popup.CloseOnEscape
+
+        contentItem: ColumnLayout {
+            spacing: 8
+            Label {
+                text: canvas.presets.length > 0
+                      ? "Pincéis (" + canvas.presets.length + ")"
+                      : "Pincéis indisponíveis nesta versão"
+                font.bold: true
+            }
+            GridView {
+                id: grid
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                cellWidth: Math.floor(width / Math.max(2, Math.floor(width / 120)))
+                cellHeight: 96
+                model: canvas.presets
+                delegate: Rectangle {
+                    required property var modelData
+                    width: grid.cellWidth - 6
+                    height: grid.cellHeight - 6
+                    radius: 6
+                    color: canvas.preset === modelData.id && root.tool === "Preset" ? "#d98e3f" : "#2b2d31"
+                    Image {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 4
+                        height: parent.height - 26
+                        fillMode: Image.PreserveAspectFit
+                        source: modelData.preview
+                        asynchronous: true
+                    }
+                    Label {
+                        anchors.bottom: parent.bottom
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottomMargin: 4
+                        width: parent.width - 8
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideRight
+                        font.pixelSize: 11
+                        text: modelData.name
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: {
+                            canvas.preset = modelData.id
+                            root.tool = "Preset"
+                            libraryPopup.close()
+                        }
+                    }
+                }
             }
         }
     }
