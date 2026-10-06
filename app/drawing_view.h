@@ -1,5 +1,6 @@
 #pragma once
 #include <QColor>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QImage>
 #include <QPointF>
@@ -8,9 +9,13 @@
 #include <QStringList>
 #include <QTimer>
 #include <QTransform>
+#include <QVariantList>
 #include <QtQml/qqmlregistration.h>
 
+#include <memory>
+
 #include "arf/drawing.h"
+#include "mypaint_engine.h"
 
 // Canvas de animação: desenha traços nas camadas, mostra onion skin e reproduz.
 // Gestos: 1 dedo/caneta desenha; 2 dedos fazem zoom, pan e rotação.
@@ -22,6 +27,8 @@ class DrawingView : public QQuickPaintedItem {
   Q_PROPERTY(int activeLayer READ activeLayer WRITE setActiveLayer NOTIFY layersChanged)
   Q_PROPERTY(QStringList layerNames READ layerNames NOTIFY layersChanged)
   Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
+  Q_PROPERTY(QString preset READ preset WRITE setPreset NOTIFY presetChanged)
+  Q_PROPERTY(QVariantList presets READ presets CONSTANT)
   Q_PROPERTY(QColor color READ color WRITE setColor NOTIFY colorChanged)
   Q_PROPERTY(qreal brushSize READ brushSize WRITE setBrushSize NOTIFY brushSizeChanged)
   Q_PROPERTY(qreal brushOpacity READ brushOpacity WRITE setBrushOpacity NOTIFY brushOpacityChanged)
@@ -42,6 +49,8 @@ public:
   int activeLayer() const { return activeLayer_; }
   QStringList layerNames() const;
   QString tool() const { return tool_; }
+  QString preset() const { return preset_; }
+  QVariantList presets() const { return mp::presets(); }
   QColor color() const { return color_; }
   qreal brushSize() const { return brushSize_; }
   qreal brushOpacity() const { return brushOpacity_; }
@@ -57,6 +66,7 @@ public:
   void setFrame(int f);
   void setActiveLayer(int i);
   void setTool(const QString& t);
+  void setPreset(const QString& id);
   void setColor(const QColor& c);
   void setBrushSize(qreal s);
   void setBrushOpacity(qreal o);
@@ -80,6 +90,7 @@ signals:
   void frameChanged();
   void layersChanged();
   void toolChanged();
+  void presetChanged();
   void colorChanged();
   void brushSizeChanged();
   void brushOpacityChanged();
@@ -118,6 +129,9 @@ private:
 
   arf::Animation anim_;
   arf::Stroke current_;
+  std::unique_ptr<mp::Live> live_;           // pincel MyPaint em andamento
+  QImage liveImg_;
+  QElapsedTimer strokeClock_;
   QHash<int, QImage> cache_;                 // quadros já compostos (e onion skin)
   QHash<quint64, QImage> layerImgs_;         // imagem de cada (camada, quadro-chave)
   QTimer playTimer_;
@@ -125,6 +139,7 @@ private:
   int activeLayer_ = 0;
   int revision_ = 0;
   QString tool_ = "Pencil";
+  QString preset_;
   QColor color_ = QColor("#111111");
   qreal brushSize_ = 6;
   qreal brushOpacity_ = 1.0;
