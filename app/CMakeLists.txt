@@ -18,9 +18,18 @@ qt_add_qml_module(AnimatorRF
     brush_engine.cpp
     mypaint_engine.h
     mypaint_engine.cpp
+    project_io.h
+    project_io.cpp
+    project_store.h
+    project_store.cpp
+    gif_writer.h
+    gif_writer.cpp
+    zip_writer.h
+    zip_writer.cpp
   QML_FILES
     qml/Main.qml
     qml/HomeScreen.qml
+    qml/NewProjectScreen.qml
     qml/EditorScreen.qml
     qml/Timeline.qml
     qml/ToolStrip.qml
