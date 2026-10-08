@@ -14,7 +14,7 @@ Page {
     readonly property bool smoke: Qt.application.arguments.indexOf("--smoke") >= 0
     property string tool: "Pencil"
     property color penColor: "#111111"
-    property var smokeQueue: ["png", "gif", "zip"]
+    property var smokeQueue: ["png", "gif", "zip", "mp4"]
     readonly property var swatches: ["#111111", "#c0392b", "#2f6fb0", "#3f8f5b", "#d9a441", "#ffffff"]
     readonly property string brushLabel: {
         if (tool === "Preset") return canvas.preset.split("/").pop()
@@ -27,8 +27,9 @@ Page {
     }
 
     function startExport(kind) {
+        const filters = { "png": ["PNG (*.png)"], "gif": ["GIF (*.gif)"], "zip": ["ZIP (*.zip)"], "mp4": ["MP4 (*.mp4)"] }
         exportDialog.kind = kind
-        exportDialog.nameFilters = kind === "gif" ? ["GIF (*.gif)"] : (kind === "zip" ? ["ZIP (*.zip)"] : ["PNG (*.png)"])
+        exportDialog.nameFilters = filters[kind]
         exportDialog.defaultSuffix = kind
         exportDialog.open()
     }
@@ -200,10 +201,10 @@ Page {
     // ---- exportação ----
     Menu {
         id: exportMenu
-        MenuItem { text: "Exportar imagem (PNG)"; onTriggered: root.startExport("png") }
+        MenuItem { text: "Exportar vídeo MP4"; onTriggered: root.startExport("mp4") }
         MenuItem { text: "Exportar GIF animado"; onTriggered: root.startExport("gif") }
+        MenuItem { text: "Exportar imagem (PNG)"; onTriggered: root.startExport("png") }
         MenuItem { text: "Sequência de PNG (.zip)"; onTriggered: root.startExport("zip") }
-        MenuItem { text: "Vídeo MP4 (em breve)"; enabled: false }
     }
 
     FileDialog {
