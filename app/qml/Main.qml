@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
+import ArfApp
 
 ApplicationWindow {
     visible: true
@@ -16,8 +17,22 @@ ApplicationWindow {
     StackView {
         id: stack
         anchors.fill: parent
-        initialItem: HomeScreen {
-            onNewProject: stack.push(editorComponent)
+        initialItem: homeComponent
+    }
+
+    Component {
+        id: homeComponent
+        HomeScreen {
+            onNewProject: stack.push(newProjectComponent)
+            onOpenProject: (id) => stack.push(editorComponent, { projectId: id })
+        }
+    }
+
+    Component {
+        id: newProjectComponent
+        NewProjectScreen {
+            onBack: stack.pop()
+            onCreated: (id) => stack.replace(editorComponent, { projectId: id })
         }
     }
 
@@ -28,9 +43,11 @@ ApplicationWindow {
         }
     }
 
-    // Teste de fumaça do CI: abre o editor direto para validar a tela principal.
+    // Teste de fumaça do CI: cria um projeto e abre o editor para validar a tela principal.
     Component.onCompleted: {
-        if (Qt.application.arguments.indexOf("--smoke") >= 0)
-            stack.push(editorComponent)
+        if (Qt.application.arguments.indexOf("--smoke") >= 0) {
+            const id = ProjectStore.create("smoke", 1280, 720, 24, 48)
+            stack.push(editorComponent, { projectId: id })
+        }
     }
 }

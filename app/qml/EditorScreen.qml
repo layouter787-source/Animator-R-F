@@ -1,25 +1,71 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import ArfApp
 
 Page {
     id: root
+    property string projectId
     signal back()
 
     // Celular: ferramentas embaixo. Tablet: barra lateral.
     readonly property bool compact: width < 720
+    readonly property bool smoke: Qt.application.arguments.indexOf("--smoke") >= 0
     property string tool: "Pencil"
     property color penColor: "#111111"
+    property var smokeQueue: ["png", "gif", "zip"]
     readonly property var swatches: ["#111111", "#c0392b", "#2f6fb0", "#3f8f5b", "#d9a441", "#ffffff"]
+    readonly property string brushLabel: {
+        if (tool === "Preset") return canvas.preset.split("/").pop()
+        return ({ "Pencil": "Lápis", "Ink": "Tinta", "Brush": "Macio", "Eraser": "Borracha" })[tool]
+    }
+
+    function leave() {
+        canvas.saveNow()
+        root.back()
+    }
+
+    function startExport(kind) {
+        exportDialog.kind = kind
+        exportDialog.nameFilters = kind === "gif" ? ["GIF (*.gif)"] : (kind === "zip" ? ["ZIP (*.zip)"] : ["PNG (*.png)"])
+        exportDialog.defaultSuffix = kind
+        exportDialog.open()
+    }
+
+    function smokeNext() {
+        if (smokeQueue.length === 0) {
+            Qt.exit(0)
+            return
+        }
+        const k = smokeQueue.shift()
+        canvas.exportAs(k, "file:///tmp/arf_smoke." + k)
+    }
+
+    Component.onCompleted: {
+        canvas.openProject(root.projectId)
+        if (smoke) {
+            canvas.saveNow()
+            smokeNext()
+        }
+    }
+
+    // Salva quando o app vai para segundo plano.
+    Connections {
+        target: Qt.application
+        function onStateChanged() {
+            if (Qt.application.state !== Qt.ApplicationActive) canvas.saveNow()
+        }
+    }
 
     header: ToolBar {
         RowLayout {
             anchors.fill: parent
             spacing: 2
-            ToolButton { text: "←"; onClicked: root.back() }
+            ToolButton { text: "←"; onClicked: root.leave() }
             Label {
-                text: "Quadro " + canvas.frame + " / " + canvas.frameCount
+                text: canvas.projectName + " · " + canvas.frame + "/" + canvas.frameCount
+                elide: Text.ElideRight
                 Layout.fillWidth: true
             }
             ToolButton {
@@ -29,6 +75,7 @@ Page {
             ToolButton { text: "↶"; enabled: canvas.canUndo; onClicked: canvas.undo() }
             ToolButton { text: "↷"; enabled: canvas.canRedo; onClicked: canvas.redo() }
             ToolButton { text: canvas.playing ? "❚❚" : "▶"; onClicked: canvas.togglePlay() }
+            ToolButton { text: "⋮"; onClicked: exportMenu.popup() }
         }
     }
 
@@ -39,10 +86,14 @@ Page {
         ToolStrip {
             visible: !root.compact
             vertical: true
-            current: root.tool
-            onPicked: (t) => root.tool = t
+            brushLabel: root.brushLabel
+            brushActive: root.tool !== "Eraser"
+            eraserActive: root.tool === "Eraser"
+            onBrushClicked: brushPopup.open()
+            onEraserClicked: root.tool = "Eraser"
             Layout.preferredWidth: 88
-            Layout.fillHeight: true
+            Layout.alignment: Qt.AlignTop
+            Layout.topMargin: 12
         }
 
         ColumnLayout {
@@ -56,6 +107,15 @@ Page {
                 color: root.penColor
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                onExportFinished: (ok, message) => {
+                    if (root.smoke) {
+                        if (!ok) { console.log("ERRO smoke export: " + message); Qt.exit(2) }
+                        else root.smokeNext()
+                        return
+                    }
+                    toastLabel.text = message
+                    toast.open()
+                }
             }
 
             // Cores, tamanho e ajustes do pincel
@@ -81,27 +141,19 @@ Page {
                     Layout.fillWidth: true
                     onMoved: canvas.brushSize = value
                 }
-                ToolButton { text: "⚙"; onClicked: brushPopup.open() }
+                ToolButton { text: "⚙"; onClicked: settingsPopup.open() }
             }
 
-            RowLayout {
-                Layout.fillWidth: true
+            ToolStrip {
+                visible: root.compact
+                vertical: false
+                brushLabel: root.brushLabel
+                brushActive: root.tool !== "Eraser"
+                eraserActive: root.tool === "Eraser"
+                onBrushClicked: brushPopup.open()
+                onEraserClicked: root.tool = "Eraser"
+                Layout.alignment: Qt.AlignHCenter
                 Layout.preferredHeight: 48
-                spacing: 0
-                ToolStrip {
-                    visible: root.compact
-                    vertical: false
-                    current: root.tool
-                    onPicked: (t) => root.tool = t
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                }
-                Item { visible: !root.compact; Layout.fillWidth: true }
-                ToolButton {
-                    text: "Pincéis"
-                    highlighted: root.tool === "Preset"
-                    onClicked: libraryPopup.open()
-                }
             }
 
             // Camadas
@@ -145,9 +197,51 @@ Page {
         }
     }
 
-    // Ajustes do pincel
+    // ---- exportação ----
+    Menu {
+        id: exportMenu
+        MenuItem { text: "Exportar imagem (PNG)"; onTriggered: root.startExport("png") }
+        MenuItem { text: "Exportar GIF animado"; onTriggered: root.startExport("gif") }
+        MenuItem { text: "Sequência de PNG (.zip)"; onTriggered: root.startExport("zip") }
+        MenuItem { text: "Vídeo MP4 (em breve)"; enabled: false }
+    }
+
+    FileDialog {
+        id: exportDialog
+        property string kind: "gif"
+        fileMode: FileDialog.SaveFile
+        onAccepted: canvas.exportAs(kind, selectedFile)
+    }
+
     Popup {
-        id: brushPopup
+        id: toast
+        parent: Overlay.overlay
+        x: (parent.width - width) / 2
+        y: parent.height - height - 120
+        padding: 12
+        closePolicy: Popup.NoAutoClose
+        onOpened: toastTimer.restart()
+        Timer { id: toastTimer; interval: 2500; onTriggered: toast.close() }
+        contentItem: Label { id: toastLabel }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: canvas.busy
+        color: "#aa000000"
+        z: 10
+        MouseArea { anchors.fill: parent }
+        Column {
+            anchors.centerIn: parent
+            spacing: 12
+            BusyIndicator { running: canvas.busy; anchors.horizontalCenter: parent.horizontalCenter }
+            Label { text: "Exportando…" }
+        }
+    }
+
+    // ---- ajustes do pincel ----
+    Popup {
+        id: settingsPopup
         parent: Overlay.overlay
         width: Math.min(root.width - 32, 380)
         x: (parent.width - width) / 2
@@ -188,12 +282,12 @@ Page {
         }
     }
 
-    // Biblioteca de pincéis (MyPaint, domínio público)
+    // ---- lista de pincéis (abre ao tocar no ícone do lápis) ----
     Popup {
-        id: libraryPopup
+        id: brushPopup
         parent: Overlay.overlay
         width: Math.min(root.width - 24, 560)
-        height: Math.min(root.height * 0.7, 520)
+        height: Math.min(root.height * 0.75, 560)
         x: (parent.width - width) / 2
         y: (parent.height - height) / 2
         padding: 12
@@ -202,14 +296,38 @@ Page {
 
         contentItem: ColumnLayout {
             spacing: 8
+            Label { text: "Escolha o pincel"; font.bold: true }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Repeater {
+                    model: [
+                        { tool: "Pencil", name: "Lápis" },
+                        { tool: "Ink", name: "Tinta" },
+                        { tool: "Brush", name: "Macio" }
+                    ]
+                    delegate: Button {
+                        required property var modelData
+                        text: modelData.name
+                        Layout.fillWidth: true
+                        highlighted: root.tool === modelData.tool
+                        onClicked: {
+                            root.tool = modelData.tool
+                            brushPopup.close()
+                        }
+                    }
+                }
+            }
+
             Label {
-                text: canvas.presets.length > 0
-                      ? "Pincéis (" + canvas.presets.length + ")"
-                      : "Pincéis indisponíveis nesta versão"
-                font.bold: true
+                visible: canvas.presets.length > 0
+                text: "Pincéis de pintura (" + canvas.presets.length + ")"
+                opacity: 0.8
             }
             GridView {
                 id: grid
+                visible: canvas.presets.length > 0
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
@@ -247,7 +365,7 @@ Page {
                         onClicked: {
                             canvas.preset = modelData.id
                             root.tool = "Preset"
-                            libraryPopup.close()
+                            brushPopup.close()
                         }
                     }
                 }

@@ -9,6 +9,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QTransform>
+#include <QUrl>
 #include <QVariantList>
 #include <QtQml/qqmlregistration.h>
 
@@ -23,7 +24,9 @@ class DrawingView : public QQuickPaintedItem {
   Q_OBJECT
   QML_ELEMENT
   Q_PROPERTY(int frame READ frame WRITE setFrame NOTIFY frameChanged)
-  Q_PROPERTY(int frameCount READ frameCount CONSTANT)
+  Q_PROPERTY(int frameCount READ frameCount NOTIFY projectChanged)
+  Q_PROPERTY(QString projectName READ projectName NOTIFY projectChanged)
+  Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
   Q_PROPERTY(int activeLayer READ activeLayer WRITE setActiveLayer NOTIFY layersChanged)
   Q_PROPERTY(QStringList layerNames READ layerNames NOTIFY layersChanged)
   Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
@@ -43,9 +46,12 @@ class DrawingView : public QQuickPaintedItem {
 
 public:
   explicit DrawingView(QQuickItem* parent = nullptr);
+  ~DrawingView() override;
 
   int frame() const { return frame_; }
   int frameCount() const { return anim_.frameCount; }
+  QString projectName() const { return projectName_; }
+  bool busy() const { return busy_; }
   int activeLayer() const { return activeLayer_; }
   QStringList layerNames() const;
   QString tool() const { return tool_; }
@@ -84,10 +90,18 @@ public:
   Q_INVOKABLE void togglePlay();
   Q_INVOKABLE void resetView();
 
+  // Projeto: abrir, salvar (também é chamado sozinho depois de cada alteração) e exportar.
+  Q_INVOKABLE bool openProject(const QString& id);
+  Q_INVOKABLE void saveNow();
+  Q_INVOKABLE void exportAs(const QString& kind, const QUrl& url);  // "png", "gif" ou "zip"
+
   void paint(QPainter* painter) override;
 
 signals:
   void frameChanged();
+  void projectChanged();
+  void busyChanged();
+  void exportFinished(bool ok, const QString& message);
   void layersChanged();
   void toolChanged();
   void presetChanged();
@@ -125,7 +139,12 @@ private:
   QImage layerImage(int layer, int frame);
   QImage compose(int frame);
   QImage onionImage(int frame, const QColor& tint);
+  QImage renderFrame(int frame);  // quadro final sobre fundo branco
   void invalidate(bool layersToo = false);
+  void scheduleSave();
+  bool doExport(const QString& kind, const QUrl& url, QString* message);
+  int maxCachedFrames() const;
+  int maxLayerImages() const;
 
   arf::Animation anim_;
   arf::Stroke current_;
@@ -135,6 +154,10 @@ private:
   QHash<int, QImage> cache_;                 // quadros já compostos (e onion skin)
   QHash<quint64, QImage> layerImgs_;         // imagem de cada (camada, quadro-chave)
   QTimer playTimer_;
+  QTimer saveTimer_;
+  QString projectId_;
+  QString projectName_;
+  bool busy_ = false;
   int frame_ = 1;
   int activeLayer_ = 0;
   int revision_ = 0;
