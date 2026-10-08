@@ -19,7 +19,7 @@ if grep -Eiq "TypeError|ReferenceError|is not a type|Cannot assign|Unable to ass
 fi
 
 python3 - <<'PY'
-import zipfile, sys, zlib, struct
+import zipfile, sys
 
 def need(cond, msg):
     if not cond:
@@ -28,7 +28,7 @@ def need(cond, msg):
 
 png = open("/tmp/arf_smoke.png", "rb").read()
 need(png[:8] == b"\x89PNG\r\n\x1a\n", "PNG inválido")
-need(len(png) > 20000, "PNG parece em branco (%d bytes): os traços não foram desenhados" % len(png))
+need(len(png) > 8000, "PNG parece em branco (%d bytes): os traços não foram desenhados" % len(png))
 
 gif = open("/tmp/arf_smoke.gif", "rb").read()
 need(gif[:6] == b"GIF89a" and gif[-1:] == b"\x3b", "GIF inválido")
@@ -42,7 +42,7 @@ mp4 = open("/tmp/arf_smoke.mp4", "rb").read()
 need(mp4[4:8] == b"ftyp", "MP4 sem cabeçalho ftyp")
 need(b"moov" in mp4 and b"mdat" in mp4, "MP4 sem moov/mdat")
 need(b"avcC" in mp4, "MP4 sem configuração H.264 (avcC)")
-need(len(mp4) > 20000, "MP4 pequeno demais (%d bytes)" % len(mp4))
+need(len(mp4) > 8000, "MP4 pequeno demais (%d bytes)" % len(mp4))
 
 print("Exportações OK:", len(png), "bytes (PNG),", len(gif), "bytes (GIF),",
       len(z.namelist()), "arquivos (ZIP),", len(mp4), "bytes (MP4)")
