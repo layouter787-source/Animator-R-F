@@ -14,6 +14,7 @@
 
 #include "brush_engine.h"
 #include "gif_writer.h"
+#include "mp4_export.h"
 #include "project_io.h"
 #include "project_store.h"
 #include "zip_writer.h"
@@ -327,6 +328,15 @@ bool DrawingView::doExport(const QString& kind, const QUrl& url, QString* messag
       ok = zip.addFile(QString("%1_%2.png").arg(base).arg(i, 4, 10, QLatin1Char('0')),
                        pngBytes(renderFrame(i)));
     ok = ok && zip.finish();
+  } else if (kind == "mp4") {
+    QString error;
+    ok = writeMp4(&f, anim_.width, anim_.height, anim_.fps, anim_.frameCount,
+                  [this](int i) { return renderFrame(i + 1); }, &error);
+    if (!ok) {
+      f.close();
+      *message = error;
+      return false;
+    }
   } else {
     *message = QStringLiteral("Formato de exportação desconhecido.");
     return false;
