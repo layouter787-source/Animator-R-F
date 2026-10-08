@@ -1,7 +1,8 @@
-# Pincéis de código aberto:
+# Componentes de código aberto:
 #  - libmypaint 1.6.1 (licença ISC): o motor de pincéis do MyPaint
 #  - mypaint-brushes 1.3.1 (CC0 / domínio público): os pincéis prontos
 #  - json-c 0.17 (licença MIT): leitura dos arquivos .myb
+#  - minih264 e minimp4 (CC0 / domínio público): exportação de vídeo MP4 (H.264)
 # Tudo é baixado na configuração e compilado junto com o app. Veja THIRD_PARTY_NOTICES.md.
 include(FetchContent)
 enable_language(C)
@@ -94,3 +95,20 @@ endif()
 
 # Pasta dos pincéis, usada pelo app para embutir os arquivos.
 set(ARF_MYPAINT_BRUSH_DIR "${mypaint_brushes_SOURCE_DIR}/brushes" PARENT_SCOPE)
+
+# Vídeo MP4: codificador H.264 (minih264) + gravador de MP4 (minimp4), só cabeçalhos.
+FetchContent_Declare(minih264
+  GIT_REPOSITORY https://github.com/lieff/minih264.git
+  GIT_TAG b0baea7a80ef9d12da97301dd1099b8791b5ba43
+  SOURCE_SUBDIR arf_sem_cmake)
+FetchContent_Declare(minimp4
+  GIT_REPOSITORY https://github.com/lieff/minimp4.git
+  GIT_TAG 2a3014a7753cfcba4442adeb469431967238fe6a
+  SOURCE_SUBDIR arf_sem_cmake)
+FetchContent_MakeAvailable(minih264 minimp4)
+
+add_library(arf_mp4 STATIC "${CMAKE_CURRENT_SOURCE_DIR}/mp4_impl/arf_mp4.c")
+target_include_directories(arf_mp4
+  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/mp4_impl"
+  PRIVATE "${minih264_SOURCE_DIR}" "${minimp4_SOURCE_DIR}")
+set_target_properties(arf_mp4 PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
