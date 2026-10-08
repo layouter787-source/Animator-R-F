@@ -17,5 +17,12 @@ O Animator-R-F usa componentes de código aberto. Todos permitem uso comercial.
 - Origem: https://github.com/json-c/json-c (versão 0.17)
 - Licença: MIT.
 
-Os três são baixados no momento da configuração do build (`third_party/CMakeLists.txt`) e não são
+## minih264 (codificador de vídeo H.264) e minimp4 (gravador de MP4)
+- Origem: https://github.com/lieff/minih264 e https://github.com/lieff/minimp4
+- Licença: CC0 1.0 (domínio público).
+- Observação: a CC0 cobre os direitos autorais do código. O formato H.264 em si tem patentes
+  licenciadas pelo grupo MPEG LA/Via LA; para distribuir comercialmente em grande escala,
+  consulte as regras de licenciamento do H.264 (hoje há isenção para volumes pequenos).
+
+Todos são baixados no momento da configuração do build (`third_party/CMakeLists.txt`) e não são
 copiados para este repositório.
