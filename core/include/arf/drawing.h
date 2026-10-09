@@ -57,10 +57,25 @@ public:
   void insertBlankKey(int layer, int frame);
   bool addStroke(int layer, int frame, Stroke stroke);
 
+  // ---- estrutura da linha do tempo (limpam o histórico de desfazer) ----
+  int lastKey(int layer) const;                     // maior quadro-chave da camada (0 = nenhum)
+  int nextKeyAfter(int layer, int frame) const;     // próximo quadro-chave depois de `frame` (0 = nenhum)
+  int keyDuration(int layer, int key) const;        // quadros que o desenho ocupa (o último vai até o fim)
+  bool setKeyDuration(int layer, int key, int duration);
+  int addDrawingAfter(int layer, int frame);        // desenho em branco logo depois do atual; devolve o quadro
+  bool deleteDrawing(int layer, int key);           // remove e fecha o espaço
+  void ensureFrames(int frames);                    // aumenta o total de quadros
+  bool removeLayer(int index);                      // mantém ao menos uma camada
+  bool moveLayer(int from, int to);
+
   bool undo();
   bool redo();
   bool canUndo() const { return !undo_.empty(); }
   bool canRedo() const { return !redo_.empty(); }
+  void clearHistory() {
+    undo_.clear();
+    redo_.clear();
+  }
 
 private:
   struct Action {
