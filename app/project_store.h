@@ -20,6 +20,8 @@ public:
   Q_INVOKABLE void refresh();
   Q_INVOKABLE QString create(const QString& name, int width, int height, int fps, int frames);
   Q_INVOKABLE void remove(const QString& id);
+  // Projeto de exemplo com traços (usado pelo teste automático do CI).
+  Q_INVOKABLE QString createSample();
 
   static QString projectDir(const QString& id);
   static QString projectFile(const QString& id);

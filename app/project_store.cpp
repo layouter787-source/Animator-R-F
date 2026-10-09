@@ -9,8 +9,10 @@
 #include <QUrl>
 #include <QUuid>
 #include <algorithm>
+#include <cmath>
 
 #include "arf/drawing.h"
+#include "mypaint_engine.h"
 #include "project_io.h"
 
 namespace {
@@ -89,6 +91,61 @@ QString ProjectStore::create(const QString& name, int width, int height, int fps
   anim.addLayer("Camada 1");
 
   const QString title = name.trimmed().isEmpty() ? QStringLiteral("Sem título") : name.trimmed();
+  if (!projectio::save(projectFile(id), anim, title)) return QString();
+  writeMeta(id, title, anim.width, anim.height, anim.fps, anim.frameCount);
+  refresh();
+  return id;
+}
+
+QString ProjectStore::createSample() {
+  const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  QDir().mkpath(projectDir(id));
+
+  arf::Animation anim;
+  anim.width = 1280;
+  anim.height = 720;
+  anim.fps = 24;
+  anim.frameCount = 48;
+  anim.addLayer("Camada 1");
+  anim.addLayer("Camada 2");
+
+  // Um pincel MyPaint, se o build tiver o motor.
+  std::string preset;
+  if (mp::available()) {
+    if (mp::hasPreset("classic/pencil")) preset = "classic/pencil";
+    else if (!mp::presets().isEmpty())
+      preset = mp::presets().first().toMap().value("id").toString().toStdString();
+  }
+
+  for (int f = 1; f <= anim.frameCount; ++f) {
+    arf::Stroke pencil;  // lápis: diagonal que anda a cada quadro
+    pencil.size = 10;
+    pencil.color = 0xFF2F6FB0;
+    for (int k = 0; k <= 20; ++k)
+      pencil.points.push_back({100.0f + 12.0f * f + 15.0f * k, 100.0f + 20.0f * k, 1.0f, 0.01f * k});
+    anim.addStroke(0, f, pencil);
+
+    arf::Stroke ink;  // tinta: pressão variando ao longo do traço
+    ink.brush = arf::BrushType::Ink;
+    ink.size = 16;
+    for (int k = 0; k <= 30; ++k)
+      ink.points.push_back({200.0f + 25.0f * k, 420.0f + 40.0f * std::sin(0.3f * k + 0.2f * f),
+                            0.2f + 0.8f * std::sin(float(M_PI) * k / 30.0f), 0.01f * k});
+    anim.addStroke(1, f, ink);
+
+    if (!preset.empty()) {
+      arf::Stroke paint;
+      paint.preset = preset;
+      paint.size = 14;
+      paint.color = 0xFFC0392B;
+      for (int k = 0; k <= 30; ++k)
+        paint.points.push_back({150.0f + 28.0f * k, 560.0f + 30.0f * std::cos(0.25f * k + 0.2f * f),
+                                0.6f, 0.01f * k});
+      anim.addStroke(1, f, paint);
+    }
+  }
+
+  const QString title = QStringLiteral("Exemplo");
   if (!projectio::save(projectFile(id), anim, title)) return QString();
   writeMeta(id, title, anim.width, anim.height, anim.fps, anim.frameCount);
   refresh();

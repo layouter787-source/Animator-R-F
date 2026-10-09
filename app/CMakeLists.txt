@@ -26,6 +26,8 @@ qt_add_qml_module(AnimatorRF
     gif_writer.cpp
     zip_writer.h
     zip_writer.cpp
+    mp4_export.h
+    mp4_export.cpp
   QML_FILES
     qml/Main.qml
     qml/HomeScreen.qml
@@ -48,6 +50,12 @@ if(ARF_WITH_MYPAINT)
     PREFIX "/brushes"
     BASE "${ARF_MYPAINT_BRUSH_DIR}"
     FILES ${_brush_files})
+endif()
+
+# Exportação de vídeo MP4 (minih264 + minimp4, CC0).
+if(TARGET arf_mp4)
+  target_compile_definitions(AnimatorRF PRIVATE ARF_WITH_MP4)
+  target_link_libraries(AnimatorRF PRIVATE arf_mp4)
 endif()
 
 if(ANDROID)

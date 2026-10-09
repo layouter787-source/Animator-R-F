@@ -43,10 +43,11 @@ ApplicationWindow {
         }
     }
 
-    // Teste de fumaça do CI: cria um projeto e abre o editor para validar a tela principal.
+    // Teste de fumaça do CI: cria um projeto de exemplo (com traços), abre o editor,
+    // salva e exporta PNG, GIF, ZIP e MP4.
     Component.onCompleted: {
         if (Qt.application.arguments.indexOf("--smoke") >= 0) {
-            const id = ProjectStore.create("smoke", 1280, 720, 24, 48)
+            const id = ProjectStore.createSample()
             stack.push(editorComponent, { projectId: id })
         }
     }
