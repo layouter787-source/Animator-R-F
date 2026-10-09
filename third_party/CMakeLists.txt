@@ -97,6 +97,7 @@ endif()
 set(ARF_MYPAINT_BRUSH_DIR "${mypaint_brushes_SOURCE_DIR}/brushes" PARENT_SCOPE)
 
 # Vídeo MP4: codificador H.264 (minih264) + gravador de MP4 (minimp4), só cabeçalhos.
+# Cada um fica em seu próprio arquivo .c, porque os dois cabeçalhos definem funções com o mesmo nome.
 FetchContent_Declare(minih264
   GIT_REPOSITORY https://github.com/lieff/minih264.git
   GIT_TAG b0baea7a80ef9d12da97301dd1099b8791b5ba43
@@ -107,7 +108,9 @@ FetchContent_Declare(minimp4
   SOURCE_SUBDIR arf_sem_cmake)
 FetchContent_MakeAvailable(minih264 minimp4)
 
-add_library(arf_mp4 STATIC "${CMAKE_CURRENT_SOURCE_DIR}/mp4_impl/arf_mp4.c")
+add_library(arf_mp4 STATIC
+  "${CMAKE_CURRENT_SOURCE_DIR}/mp4_impl/arf_mp4.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/mp4_impl/arf_enc.c")
 target_include_directories(arf_mp4
   PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/mp4_impl"
   PRIVATE "${minih264_SOURCE_DIR}" "${minimp4_SOURCE_DIR}")
